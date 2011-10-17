@@ -16,25 +16,35 @@ var profilePage = function(profile) {
     var depiction = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/depiction") }).toArray();
     if(depiction.length === 1) {
         depiction = depiction[0].object.valueOf();
+    } else {
+        depiction = "#";
     }
     var familyName = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/family_name") }).toArray();
     if(familyName.length === 1) {
         familyName = familyName[0].object.valueOf();
+    } else {
+        familyName = "";
     }
 
     var givenName = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/givenname") }).toArray();
     if(givenName.length === 1) {
         givenName = givenName[0].object.valueOf();
+    } else {
+        givenName = "";
     }
 
     var nick = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/nick") }).toArray();
     if(nick.length === 1) {
         nick = nick[0].object.valueOf();
+    } else {
+        nick = "";
     }
 
     var homepage = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/homepage") }).toArray();
     if(homepage.length === 1) {
         homepage = homepage[0].object.valueOf();
+    } else {
+        homepage = "";
     }
 
     html = html + "<p><img src='"+depiction+"'></img>";
@@ -49,29 +59,36 @@ console.log("trying to create server at "+configuration.port);
 
 https.createServer(options,function (req, res) { 
     if(req.url == "/login") {
-        var certificate = req.connection.getPeerCertificate();
-        if(certificate) {
-            var verifAgent = new webid.VerificationAgent(certificate);
-            verifAgent.verify(function(err, profileGraph){
-                if(err) {
-                    res.writeHead(400,{"Content-Type":"text/plain"});
-                    res.write(profileGraph);
-                } else {
-                    res.writeHead(200,{"Content-Type":"text/html"});
-                    res.write(profilePage(profileGraph));
-                }
+        try {
+            var certificate = req.connection.getPeerCertificate();
+            if(certificate) {
+                var verifAgent = new webid.VerificationAgent(certificate);
+                verifAgent.verify(function(err, profileGraph){
+                    if(err) {
+                        res.writeHead(400,{"Content-Type":"text/plain"});
+                        res.write(profileGraph);
+                    } else {
+                        res.writeHead(200,{"Content-Type":"text/html"});
+                        res.write(profilePage(profileGraph));
+                    }
+                    res.end();
+                });
+            } else {
+                res.writeHead(400,{"Content-Type":"text/plain"});
+                res.write("not auth");
                 res.end();
-            });
-        } else {
-            res.writeHead(400,{"Content-Type":"text/plain"});
-            res.write("not auth");
-            res.end();
+            }
+        } catch(e) {
+                res.writeHead(500,{"Content-Type":"text/plain"});
+                res.write("There was an error processing your certificate");
+                res.end();
         }
     } else {
         res.writeHead(200,{"Content-Type":"text/html"});
-        html = "<html><p>This is a demo implementation of WebID in Node.js.</p><p>Click <a href='/login'>here</a> to log in using WebID.</p>"
-        html = html + "<p>You can get your WebID in a provider like <a href='http://foaf.me/index.php'>this</a> or create your own.</p>"
-        html = html + "<p><a href='http://www.w3.org/wiki/WebID'>This W3C wiki page</a> is a good place to learn more about WebID and why you should care about it</p>";
+        html = "<html><head><title>WebID node.js Demo</title></head><body>"
+        html = html+ "<p>This is a demo implementation of <a href='http://www.w3.org/2005/Incubator/webid/spec/'>WebID</a> running on <a href='http://nodejs.org/'>node.js</a>.</p><p>Click <a href='/login'><b>here</b></a> to log in using WebID.</p>"
+        html = html + "<p>You can get your WebID in a provider like <a href='http://foaf.me/index.php'>this one</a> or create your own.<br/>"
+        html = html + "<a href='http://www.w3.org/wiki/WebID'>This W3C wiki page</a> is a good place to learn more about WebID and why you should care about it</p></body></html>";
 
         res.write(html);
         res.end();

@@ -8,3 +8,6 @@ To make it run you need:
 - after compiling raptor bindings, copy the resulting extension and the raptor.js files to the src directory
 - start the server with:
     node ./src/server.js
+
+
+Released under the MIT license <http://www.opensource.org/licenses/MIT>

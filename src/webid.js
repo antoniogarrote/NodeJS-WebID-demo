@@ -2,12 +2,14 @@ var raptor = require('./raptor.js');
 var url = require('url');
 var http = require('http');
 var rdfstore = require('./rdfstore.js');
+var exec = require('child_process').exec
 
 exports.VerificationAgent = function(certificate){
     this.subjectAltName = certificate.subjectaltname;
     this.modulus = certificate.modulus;
-    this.exponent = certificate.exponent;
-    this.uris = this.subjectAltName.split(",")
+    this.moduus = (''+this.modulus).replace(/^([0]{2})+/,"");
+    this.exponent = ''+parseInt(certificate.exponent,16);
+    this.uris = this.subjectAltName.split(",");
     for(var i=0; i<this.uris.length; i++) {
         this.uris[i] = this.uris[i].split("URI:")[1];
     }
@@ -37,7 +39,9 @@ exports.VerificationAgent.prototype._verify = function(uris, callback) {
                 });
 
                 response.on('end', function(){
-                    var contentType = (response.headers['content-type'] || response.headers['Content-Type'])
+                    var contentType = (response.headers['content-type'] || response.headers['Content-Type']);
+		    if(contentType.indexOf(";") != -1)
+			contentType = contentType.split(";")[0];
                     if(contentType) {
                         that._verifyWebId(uris[0], res, contentType, callback);
                     } else {
@@ -60,7 +64,35 @@ exports.VerificationAgent.prototype._verify = function(uris, callback) {
 
 exports.VerificationAgent.prototype._verifyWebId = function(webidUri, data, mediaTypeHeader, callback) {
     var that = this;
-    var mediaType = null;
+
+    this._parseAndLoad(mediaTypeHeader, webidUri, data, function(success, store){
+	if(success) {
+	    var query = that._buildVerificationQuery(webidUri, that.modulus, that.exponent);
+	    store.execute(query, function(success, result) {
+		if(success && result) {
+		    callback(false, {'webid':webidUri, 'store':store});
+		} else {
+		    callback(true, "Profile data does not match certificate information");
+		}
+	    });
+	} else {
+	    callback(true, "Error parsing profile document");
+	}
+    });
+};
+
+exports.VerificationAgent.prototype._buildVerificationQuery = function(webid, modulus, exponent) {
+    return "PREFIX : <http://www.w3.org/ns/auth/cert#>\
+	    PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>\
+	    ASK {\
+               <"+webid+"> :key [\
+                 :modulus \""+modulus+"\"^^xsd:hexBinary;\
+                 :exponent "+exponent+";\
+               ] .\
+            }";
+};
+
+exports.VerificationAgent.prototype._parseAndLoad = function(mediaTypeHeader, webidUri, data, cb) {
     if(mediaTypeHeader === "application/rdf+xml") {
         mediaType = 'rdfxml';
     } else {
@@ -73,99 +105,67 @@ exports.VerificationAgent.prototype._verifyWebId = function(webidUri, data, medi
 
     parser.on('statement', function(statement) {
         nextStatement = "<"+statement.subject.value+"><"+statement.predicate.value+">";
+        if(statement.subject.type === "uri") {
+            nextStatement = "<"+statement.subject.value+"><"+statement.predicate.value+">";	    
+	} else {
+            nextStatement = "_:"+statement.subject.value+"<"+statement.predicate.value+">";
+	}
+
         if(statement.object.type === "uri") {
             nextStatement = nextStatement + "<"+statement.object.value+">.";
-        } else {
-            nextStatement = nextStatement + "\""+statement.object.value+"\".";
+        } else if(statement.object.type === "bnode"){
+            nextStatement = nextStatement + "_:"+statement.object.value+".";
+	} else {
+            if(statement.object.type === 'typed-literal') {
+                nextStatement = nextStatement + "\""+statement.object.value+"\"^^<"+statement.object.datatype+">.";
+            } else {
+                nextStatement = nextStatement + "\""+statement.object.value+"\".";
+            }
         }
+
         statements = statements+nextStatement;
     });
 
     parser.on('end', function(){
         rdfstore.create(function(store){
             store.load("text/turtle",statements,function(success, results) {
-                store.execute("PREFIX cert: <http://www.w3.org/ns/auth/cert#>\
-                               PREFIX rsa: <http://www.w3.org/ns/auth/rsa#>\
-                               SELECT ?m ?e ?webid\
-                               WHERE {\
-                                 ?cert cert:identity ?webid ;\
-                                 rsa:modulus ?m ;\
-                                 rsa:public_exponent ?e .\
-                               }", function(success, results) {
-                                   if(success) {
-                                       var modulus = null;
-                                       var exponent = null;
-                                       for(var i=0; i<results.length; i++) {
-                                           if(results[i].webid && results[i].webid.value===webidUri) {
-                                               modulus = results[i].m;
-                                               exponent = results[i].e;
-                                           }
-                                       }
-                                       if(modulus!=null && exponent!=null) {
-                                           that._resolveModulusValue(store, modulus, function(modulus){
-                                               that._resolveExponentValue(store, exponent, function(exponent) {
-                                                   if((""+that.modulus==""+modulus) &&
-                                                      (""+that.exponent == ""+exponent)) {
-                                                       store.node(webidUri, function(success, graph) {
-                                                           callback(false, graph);
-                                                       });
-                                                   } else {
-                                                       callback(true, "notMatchingCertificate");
-                                                   }
-                                               });
-                                           });
-                                       } else {
-                                           callback(true, "certficateDataNotFound");
-                                       }
-                                   } else {
-                                       callback(true, "certficateDataNotFound");
-                                   }
-                               });
-            });
-        });
-    });
+			   if(success) {
+			       cb(true, store);
+			   } else {
+			       cb(false, null);
+			   }
+	    });
+	});
+    });    
 
     parser.parseStart(webidUri);
     parser.parseBuffer(new Buffer(data));
     parser.parseBuffer();
 };
 
-exports.VerificationAgent.prototype._resolveModulusValue = function(store, modulus, cb) {
-    if(modulus.token === 'uri') {
-        store.execute("SELECT ?v { <"+modulus.value+"><http://www.w3.org/ns/auth/cert#hex>?v }", function(success, results){
-            if(results.length == 1) {
-                cb(results[0].v.value);
-            } else {
-                store.execute("SELECT ?v { <"+modulus.value+"><http://www.w3.org/ns/auth/cert#decimal>?v }", function(success, results){
-                    cb(parseInt(results[0].v.value).toString(16));
-                })
-            }
-        });
-    } else {
-        if(modulus.type == "http://www.w3.org/ns/auth/cert#decimal") {
-            cb(parseInt(modulus.value).toString(16));
+/**
+ * Generates a new WebID certificate  for
+ * the provided options and stores it in
+ *  the provided path
+ */
+exports.generateCertificate = function(webid, password, path, callback) {
+    var command = 'java -cp ./certificate-generation/webidgenerator/target/webidgenerator-1.0-SNAPSHOT.jar:./certificate-generation/webidgenerator/deps/bcpg-jdk16-146.jar:./certificate-generation/webidgenerator/deps/bcmail-jdk16-146.jar:./certificate-generation/webidgenerator/deps/bcprov-jdk16-146.jar:./certificate-generation/webidgenerator/deps/bcprov-ext-jdk16-146.jar:./certificate-generation/webidgenerator/deps/bctsp-jdk16-146.jar com.antoniogarrote.webidgenerator.SelfSignedCertficateGenerator';
+    command += " " + webid + " " + path + " " + password;
+    exec(command, function(stderr, stdout, _stdin) {
+        if(stderr) {
+            callback(true, stderr);
         } else {
-            cb(modulus.value);
-        }
-    }
-};
+            try {
+                var data = JSON.parse(stdout);
 
-exports.VerificationAgent.prototype._resolveExponentValue = function(store, exponent, cb) {
-    if(exponent.token === 'uri') {
-        store.execute("SELECT ?v { <"+exponent.value+"><http://www.w3.org/ns/auth/cert#hex>?v }", function(success, results){
-            if(results.length == 1) {
-                cb(results[0].v.value);
-            } else {
-                store.execute("SELECT ?v { <"+exponent.value+"><http://www.w3.org/ns/auth/cert#decimal>?v }", function(success, results){
-                    cb(parseInt(results[0].v.value).toString(16));
-                }); 
+                //var cert = {'modulus':data.modulus,
+                //            'exponent':data.exponent,
+                //            'webid':data.uri};
+
+                callback(false, data);
+            } catch(e) {
+                callback(true, e);
             }
-        });
-    } else {
-        if(exponent.type == "http://www.w3.org/ns/auth/cert#decimal") {
-            cb(parseInt(exponent.value).toString(16));
-        } else {
-            cb(exponent.value);
         }
-    }
+    });
 };

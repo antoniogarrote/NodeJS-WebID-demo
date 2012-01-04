@@ -6,41 +6,42 @@ var webid = require('./webid.js');
 
 var configuration = require("./configuration");
 
-var options = {   key: fs.readFileSync('./ssl/privatekey.pem'),   
-                  cert: fs.readFileSync('./ssl/certificate.pem'),   
-                  requestCert: true, }; 
+var options = { key: fs.readFileSync('./ssl/privatekey.pem'),   
+                cert: fs.readFileSync('./ssl/certificate.pem'),   
+                requestCert: true }; 
 
 var profilePage = function(profile) {
-    var html = "<html><head><title>Success: "+profile.toArray()[0].subject.valueOf()+"</title></head><body>"
-
-    var depiction = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/depiction") }).toArray();
+    var html = "<html><head><title>Success: "+profile.toArray()[0].subject.valueOf()+"</title></head><body>";
+    html = html + "<h1>Success: &lt;"+profile.toArray()[0].subject.valueOf()+"&gt;</h1>";
+    html = html + "<h2>Formatted Data</h2>";
+    var depiction = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/depiction"); }).toArray();
     if(depiction.length === 1) {
         depiction = depiction[0].object.valueOf();
     } else {
         depiction = "#";
     }
-    var familyName = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/family_name") }).toArray();
+    var familyName = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/family_name"); }).toArray();
     if(familyName.length === 1) {
         familyName = familyName[0].object.valueOf();
     } else {
         familyName = "";
     }
 
-    var givenName = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/givenname") }).toArray();
+    var givenName = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/givenname"); }).toArray();
     if(givenName.length === 1) {
         givenName = givenName[0].object.valueOf();
     } else {
         givenName = "";
     }
 
-    var nick = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/nick") }).toArray();
+    var nick = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/nick"); }).toArray();
     if(nick.length === 1) {
         nick = nick[0].object.valueOf();
     } else {
         nick = "";
     }
 
-    var homepage = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/homepage") }).toArray();
+    var homepage = profile.filter(function(t){ return t.predicate.equals("http://xmlns.com/foaf/0.1/homepage"); }).toArray();
     if(homepage.length === 1) {
         homepage = homepage[0].object.valueOf();
     } else {
@@ -50,8 +51,10 @@ var profilePage = function(profile) {
     html = html + "<p><img src='"+depiction+"'></img>";
     html = html + "<a href='"+homepage+"'>"+givenName+" "+familyName+" ("+nick+")</a></p>";
 
+    html = html + "<h2>Linked Profile</h2>";
+    html = html + "<p>"+profile.toNT().replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\r\n/g,"<br/>")+"</p>";
     html = html + "</body></html>";
-    return html
+    return html;
 
 };
 
@@ -63,13 +66,17 @@ https.createServer(options,function (req, res) {
             var certificate = req.connection.getPeerCertificate();
             if(certificate) {
                 var verifAgent = new webid.VerificationAgent(certificate);
-                verifAgent.verify(function(err, profileGraph){
+                verifAgent.verify(function(err, result){
                     if(err) {
                         res.writeHead(400,{"Content-Type":"text/plain"});
-                        res.write(profileGraph);
+                        res.write(result||"");
                     } else {
-                        res.writeHead(200,{"Content-Type":"text/html"});
-                        res.write(profilePage(profileGraph));
+			var webid = result.webid;
+			var query = "CONSTRUCT { <"+webid+"> ?p ?o } WHERE { <"+webid+"> ?p ?o }";
+			result.store.execute(query, function(success, profileGraph){
+			   res.writeHead(200,{"Content-Type":"text/html"});
+			   res.write(profilePage(profileGraph));
+		        }); 
                     }
                     res.end();
                 });
@@ -85,9 +92,9 @@ https.createServer(options,function (req, res) {
         }
     } else {
         res.writeHead(200,{"Content-Type":"text/html"});
-        html = "<html><head><title>WebID node.js Demo</title></head><body>"
-        html = html+ "<p>This is a demo implementation of <a href='http://www.w3.org/2005/Incubator/webid/spec/'>WebID</a> running on <a href='http://nodejs.org/'>node.js</a>.</p><p>Click <a href='/login'><b>here</b></a> to log in using WebID.</p>"
-        html = html + "<p>You can get your WebID in a provider like <a href='http://foaf.me/index.php'>this one</a> or create your own.<br/>"
+        html = "<html><head><title>WebID node.js Demo</title></head><body>";
+        html = html+ "<p>This is a demo implementation of <a href='http://www.w3.org/2005/Incubator/webid/spec/'>WebID</a> running on <a href='http://nodejs.org/'>node.js</a>.</p><p>Click <a href='/login'><b>here</b></a> to log in using WebID.</p>";
+        html = html + "<p>You can get your WebID in a provider like <a href='http://foaf.me/index.php'>this one</a> or create your own.<br/>";
         html = html + "<a href='http://www.w3.org/wiki/WebID'>This W3C wiki page</a> is a good place to learn more about WebID and why you should care about it</p></body></html>";
 
         res.write(html);
